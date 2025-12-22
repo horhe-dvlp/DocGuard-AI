@@ -1,17 +1,11 @@
 FROM nvidia/cuda:13.1.0-runtime-ubuntu24.04
 
+
 RUN apt-get update && apt-get install -y \
-    python3.10 \
-    python3.10-dev \
-    python3-pip \
-    wget \
-    curl \
     libglib2.0-0 \
-    libgl1-mesa-glx \
-    libgthread-2.0-0 \
     libsm6 \
     libxext6 \
-    libxrender-dev \
+    libxrender1 \
     libgomp1 \
     libgcc-s1 \
     && rm -rf /var/lib/apt/lists/*
