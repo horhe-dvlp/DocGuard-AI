@@ -1,10 +1,14 @@
 FROM nvidia/cuda:13.1.0-runtime-ubuntu24.04
 
+ENV DEBIAN_FRONTEND=noninteractive
+ENV VENV_PATH=/opt/venv
+ENV PATH="$VENV_PATH/bin:$PATH"
 
 RUN apt-get update && apt-get install -y \
     python3 \
-    python3-pip \
     python3-dev \
+    python3-pip \
+    python3-venv \
     libglib2.0-0 \
     libsm6 \
     libxext6 \
@@ -13,24 +17,26 @@ RUN apt-get update && apt-get install -y \
     libgcc-s1 \
     && rm -rf /var/lib/apt/lists/*
 
+
+RUN python3 -m venv $VENV_PATH \
+    && $VENV_PATH/bin/pip install --upgrade pip setuptools wheel
+
 WORKDIR /app
 
-# Copy and install Python dependencies
-COPY requirements.txt .
-RUN pip3 install --no-cache-dir -r requirements.txt
 
-# Copy and run PaddlePaddle installation script
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+
 COPY scripts/install-pp.sh .
 RUN chmod +x install-pp.sh && ./install-pp.sh
 
-# Install PaddleOCR after PaddlePaddle
-RUN pip3 install --no-cache-dir paddleocr
 
-# Copy application code
+RUN pip install --no-cache-dir paddleocr[doc-parser]
+
+
 COPY app/ ./app/
 
-# Expose port
 EXPOSE 8072
 
-# Run the FastAPI application
-CMD ["python3", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8072"]
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8072"]
