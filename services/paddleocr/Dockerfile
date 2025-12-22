@@ -2,6 +2,9 @@ FROM nvidia/cuda:13.1.0-runtime-ubuntu24.04
 
 
 RUN apt-get update && apt-get install -y \
+    python3 \
+    python3-pip \
+    python3-dev \
     libglib2.0-0 \
     libsm6 \
     libxext6 \
