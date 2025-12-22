@@ -1,4 +1,4 @@
-FROM nvidia/cuda:13.0.0-runtime-ubuntu22.04
+FROM nvidia/cuda:13.0.0-runtime-ubuntu24.04
 
 # Add build argument for GPU architecture
 ARG GPU_ARCH=120
@@ -9,7 +9,17 @@ ENV PATH="$VENV_PATH/bin:$PATH"
 # Set GPU_ARCH as environment variable
 ENV GPU_ARCH=$GPU_ARCH
 
-RUN apt-get update && apt-get install -y python3.10 python3.10-venv python3-pip
+
+RUN apt-get update && apt-get install -y \
+    software-properties-common \
+    curl \
+    ca-certificates
+
+RUN add-apt-repository ppa:deadsnakes/ppa \
+ && apt-get update && apt-get install -y \
+    python3.10 \
+    python3.10-venv \
+    python3.10-distutils
 
 RUN apt-get update && apt-get install -y \
     ffmpeg \
