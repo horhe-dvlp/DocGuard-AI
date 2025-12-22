@@ -30,7 +30,10 @@ services:
       start_period: 60s
 
   paddleocr:
-    build: ./paddleocr
+    build:
+      context: ./paddleocr
+      args:
+        GPU_ARCH: ${GPU_ARCH:-120}
     container_name: paddleocr-ppstructure-service
     ports:
       - "8072:8072"
