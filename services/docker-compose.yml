@@ -29,6 +29,28 @@ services:
       retries: 3
       start_period: 60s
 
+  paddleocr:
+    build: ./paddleocr
+    container_name: paddleocr-ppstructure-service
+    ports:
+      - "8072:8072"
+    volumes:
+      - ./.paddlex:/root/.paddlex
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8072/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 120s
+
 networks:
   default:
     driver: bridge
