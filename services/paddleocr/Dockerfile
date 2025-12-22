@@ -1,4 +1,4 @@
-FROM nvidia/cuda:13.1.0-runtime-ubuntu24.04
+FROM nvidia/cuda:13.0.0-runtime-ubuntu24.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV VENV_PATH=/opt/venv
