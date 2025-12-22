@@ -5,6 +5,9 @@ ENV VENV_PATH=/opt/venv
 ENV PATH="$VENV_PATH/bin:$PATH"
 
 RUN apt-get update && apt-get install -y \
+    ffmpeg \
+    libsm6 \
+    libxext6 \
     libgl1 \
     libglib2.0-0 \
     python3 \
