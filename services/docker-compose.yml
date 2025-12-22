@@ -14,8 +14,6 @@ services:
     volumes:
       - ./paddlevl/vllm_config.yaml:/app/config/vllm_config.yaml:ro
       - ./.paddlex:/root/.paddlex
-    environment:
-      - CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-all}
     deploy:
       resources:
         reservations:
