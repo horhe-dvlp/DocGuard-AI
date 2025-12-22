@@ -1,0 +1,35 @@
+services:
+  paddleocr-vl:
+    image: ccr-2vdh3abv-pub.cnc.bj.baidubce.com/paddlepaddle/paddleocr-genai-vllm-server:latest
+    container_name: paddleocr-vl-server
+    command: >
+      paddleocr genai_server 
+      --model_name ${MODEL_NAME}
+      --host 0.0.0.0 
+      --port 8080 
+      --backend vllm
+      --config /app/config/vllm_config.yaml
+    ports:
+      - "${PADDLEVL_PORT}:8080"
+    volumes:
+      - ./paddlevl/vllm_config.yaml:/app/config/vllm_config.yaml:ro
+    environment:
+      - CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-all}
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:${PADDLEVL_PORT}/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+networks:
+  default:
+    driver: bridge
