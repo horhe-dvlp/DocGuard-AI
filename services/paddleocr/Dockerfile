@@ -4,6 +4,8 @@ ENV DEBIAN_FRONTEND=noninteractive
 ENV VENV_PATH=/opt/venv
 ENV PATH="$VENV_PATH/bin:$PATH"
 
+RUN apt-get update && apt-get install -y python3.10 python3.10-venv python3-pip
+
 RUN apt-get update && apt-get install -y \
     ffmpeg \
     libsm6 \
@@ -23,7 +25,7 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 
-RUN python3 -m venv $VENV_PATH \
+RUN python3.10 -m venv $VENV_PATH \
     && $VENV_PATH/bin/pip install --upgrade pip setuptools wheel
 
 WORKDIR /app
