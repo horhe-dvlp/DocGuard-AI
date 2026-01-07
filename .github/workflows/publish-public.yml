@@ -33,16 +33,15 @@ jobs:
           git filter-repo --path-glob 'config/production.*' --invert-paths --force
           git filter-repo --path-glob 'credentials/' --invert-paths --force
 
-      - name: Setup SSH deploy key
-        env:
-          PUBLIC_DEPLOY_KEY: ${{ secrets.PUBLIC_DEPLOY_KEY }}
+      - name: Start ssh-agent
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+            ssh-private-key: ${{ secrets.PUBLIC_DEPLOY_KEY }}
+        
+      - name: Add github.com to known_hosts
         run: |
-          set -euxo pipefail
-          mkdir -p ~/.ssh
-          chmod 700 ~/.ssh
-          echo "$PUBLIC_DEPLOY_KEY" > ~/.ssh/id_ed25519
-          chmod 600 ~/.ssh/id_ed25519
-          ssh-keyscan github.com >> ~/.ssh/known_hosts
+            mkdir -p ~/.ssh
+            ssh-keyscan github.com >> ~/.ssh/known_hosts
 
       - name: Push to public repository
         env:
