@@ -46,6 +46,8 @@ jobs:
 
       - name: Setup SSH Deploy Key
         if: steps.check_deploy_key.outputs.deploy_key_available == 'true'
+        env:
+          SSH_KEY: ${{ secrets.PUBLIC_DEPLOY_KEY }}
         run: |
           # Create SSH directory
           mkdir -p ~/.ssh
@@ -54,19 +56,47 @@ jobs:
           # Handle deploy key with proper line breaks
           echo "Setting up deploy key..."
           
-          # Save the key to a temporary file and fix line breaks
-          echo "${{ secrets.PUBLIC_DEPLOY_KEY }}" > /tmp/deploy_key_raw
+          # Save the key using environment variable (better for secrets)
+          echo "$SSH_KEY" > /tmp/deploy_key_raw
           
           # Debug: show key structure
           echo "Key file size: $(wc -c < /tmp/deploy_key_raw) bytes"
           echo "Key file lines: $(wc -l < /tmp/deploy_key_raw)"
-          echo "First line: $(head -1 /tmp/deploy_key_raw)"
-          echo "Last line: $(tail -1 /tmp/deploy_key_raw)"
+          echo "Key starts with: $(head -c 30 /tmp/deploy_key_raw)"
+          echo "Key ends with: $(tail -c 30 /tmp/deploy_key_raw)"
           
           # Check if key already has proper format
           if grep -q "BEGIN.*PRIVATE KEY" /tmp/deploy_key_raw && grep -q "END.*PRIVATE KEY" /tmp/deploy_key_raw; then
             echo "Key appears to have proper format"
-            cp /tmp/deploy_key_raw ~/.ssh/deploy_key
+            
+            # But check if it's actually multiline
+            LINES_COUNT=$(wc -l < /tmp/deploy_key_raw)
+            if [ "$LINES_COUNT" -eq 1 ]; then
+              echo "Key is in single line format, need to fix line breaks"
+              # Force reconstruction even if headers are present
+              KEY_CONTENT=$(cat /tmp/deploy_key_raw | tr -d '\n' | tr -d '\r')
+              
+              if echo "$KEY_CONTENT" | grep -q "BEGIN OPENSSH PRIVATE KEY"; then
+                echo "Reconstructing OpenSSH format key with proper line breaks"
+                # Extract just the key content between headers
+                KEY_BODY=$(echo "$KEY_CONTENT" | sed 's/.*-----BEGIN OPENSSH PRIVATE KEY-----//' | sed 's/-----END OPENSSH PRIVATE KEY-----.*//')
+                echo "-----BEGIN OPENSSH PRIVATE KEY-----" > ~/.ssh/deploy_key
+                echo "$KEY_BODY" | fold -w 70 >> ~/.ssh/deploy_key
+                echo "-----END OPENSSH PRIVATE KEY-----" >> ~/.ssh/deploy_key
+              elif echo "$KEY_CONTENT" | grep -q "BEGIN RSA PRIVATE KEY"; then
+                echo "Reconstructing RSA format key with proper line breaks"
+                KEY_BODY=$(echo "$KEY_CONTENT" | sed 's/.*-----BEGIN RSA PRIVATE KEY-----//' | sed 's/-----END RSA PRIVATE KEY-----.*//')
+                echo "-----BEGIN RSA PRIVATE KEY-----" > ~/.ssh/deploy_key
+                echo "$KEY_BODY" | fold -w 64 >> ~/.ssh/deploy_key
+                echo "-----END RSA PRIVATE KEY-----" >> ~/.ssh/deploy_key
+              else
+                echo "Unknown key format in single line"
+                echo "$SSH_KEY" > ~/.ssh/deploy_key
+              fi
+            else
+              echo "Key already has multiple lines, copying as-is"
+              echo "$SSH_KEY" > ~/.ssh/deploy_key
+            fi
           else
             echo "Key might be missing line breaks, attempting to fix..."
             # Try to reconstruct proper SSH key format
@@ -76,7 +106,7 @@ jobs:
             if echo "$KEY_CONTENT" | grep -q "BEGIN OPENSSH PRIVATE KEY"; then
               echo "Detected OpenSSH format key"
               echo "-----BEGIN OPENSSH PRIVATE KEY-----" > ~/.ssh/deploy_key
-              echo "$KEY_CONTENT" | sed 's/-----BEGIN OPENSSH PRIVATE KEY-----//' | sed 's/-----END OPENSSH PRIVATE KEY-----//' | fold -w 64 >> ~/.ssh/deploy_key
+              echo "$KEY_CONTENT" | sed 's/-----BEGIN OPENSSH PRIVATE KEY-----//' | sed 's/-----END OPENSSH PRIVATE KEY-----//' | fold -w 70 >> ~/.ssh/deploy_key
               echo "-----END OPENSSH PRIVATE KEY-----" >> ~/.ssh/deploy_key
             elif echo "$KEY_CONTENT" | grep -q "BEGIN RSA PRIVATE KEY"; then
               echo "Detected RSA format key"
@@ -90,7 +120,7 @@ jobs:
               echo "-----END EC PRIVATE KEY-----" >> ~/.ssh/deploy_key
             else
               echo "Error: Could not detect SSH key format"
-              echo "Raw key preview (first 100 chars): $(echo "$KEY_CONTENT" | head -c 100)..."
+              echo "Raw key preview (first 100 chars): $(echo "$KEY_CONTENT" | head -c 100)"
               exit 1
             fi
           fi
@@ -98,59 +128,26 @@ jobs:
           # Set proper permissions
           chmod 600 ~/.ssh/deploy_key
           
-          # Try multiple verification approaches
-          echo "Verifying key format..."
-          
-          # Method 1: Try ssh-keygen with the deploy_key file
-          if ssh-keygen -l -f ~/.ssh/deploy_key 2>/dev/null; then
-            echo "Key format verification successful with deploy_key"
-            KEY_FILE="~/.ssh/deploy_key"
-          else
-            echo "deploy_key verification failed, trying as id_ed25519..."
-            
-            # Method 2: Try copying to id_ed25519 (some systems expect this name)
-            cp ~/.ssh/deploy_key ~/.ssh/id_ed25519
-            chmod 600 ~/.ssh/id_ed25519
-            
-            if ssh-keygen -l -f ~/.ssh/id_ed25519 2>/dev/null; then
-              echo "Key format verification successful with id_ed25519"
-              KEY_FILE="~/.ssh/id_ed25519"
-            else
-              echo "id_ed25519 verification failed, trying as id_rsa..."
-              
-              # Method 3: Try as id_rsa for RSA keys
-              cp ~/.ssh/deploy_key ~/.ssh/id_rsa
-              chmod 600 ~/.ssh/id_rsa
-              
-              if ssh-keygen -l -f ~/.ssh/id_rsa 2>/dev/null; then
-                echo "Key format verification successful with id_rsa"
-                KEY_FILE="~/.ssh/id_rsa"
-              else
-                echo "All key verification methods failed"
-                echo "Key file debug info:"
-                echo "File size: $(ls -la ~/.ssh/deploy_key)"
-                echo "File type detection:"
-                file ~/.ssh/deploy_key || echo "file command not available"
-                echo "First few lines:"
-                head -5 ~/.ssh/deploy_key | sed 's/./*/g'  # Hide actual key content
-                echo "Last few lines:"
-                tail -5 ~/.ssh/deploy_key | sed 's/./*/g'  # Hide actual key content
-                echo "Attempting to use key anyway..."
-                KEY_FILE="~/.ssh/deploy_key"
-              fi
-            fi
-          fi
+          # Verify the final key structure
+          echo "Final key info:"
+          echo "Lines in key: $(wc -l < ~/.ssh/deploy_key)"
+          echo "Key size: $(wc -c < ~/.ssh/deploy_key) bytes"
           
           # Clean up temporary file
           rm -f /tmp/deploy_key_raw
           
+          # Try ssh-keygen verification
+          if ssh-keygen -l -f ~/.ssh/deploy_key 2>/dev/null; then
+            echo "Key format verification successful!"
+            KEY_FILE="/home/runner/.ssh/deploy_key"
+          else
+            echo "Key format verification failed, but continuing anyway"
+            KEY_FILE="/home/runner/.ssh/deploy_key"
+          fi
+          
           # Add GitHub to known hosts
           ssh-keyscan -H github.com >> ~/.ssh/known_hosts
           chmod 644 ~/.ssh/known_hosts
-          
-          # Test SSH connection with explicit key
-          echo "Testing SSH connection with key file: $KEY_FILE"
-          eval "ssh -i $KEY_FILE -T git@github.com" || echo "SSH test completed (exit code $?)"
           
           # Configure git
           git config --global user.name "GitHub Actions"
@@ -162,7 +159,12 @@ jobs:
           echo "  User git" >> ~/.ssh/config
           echo "  IdentityFile $KEY_FILE" >> ~/.ssh/config
           echo "  IdentitiesOnly yes" >> ~/.ssh/config
+          echo "  StrictHostKeyChecking no" >> ~/.ssh/config
           chmod 600 ~/.ssh/config
+          
+          # Test SSH connection
+          echo "Testing SSH connection..."
+          ssh -T git@github.com || echo "SSH test completed (exit code $?)"
 
       - name: Push via SSH Deploy Key
         if: steps.check_deploy_key.outputs.deploy_key_available == 'true'
