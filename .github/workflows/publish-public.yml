@@ -61,15 +61,59 @@ jobs:
         run: |
           git config --global user.name "GitHub Actions"
           git config --global user.email "actions@github.com"
-          git config --global url."https://x-access-token:${{ secrets.PUBLIC_REPO_TOKEN }}@github.com/".insteadOf "git@github.com:"
+
+      - name: Validate repository URLs
+        run: |
+          echo "Checking repository URLs..."
+          echo "SSH URL: ${{ vars.PUBLIC_REPO_SSH }}"
+          echo "HTTPS URL: ${{ vars.PUBLIC_REPO_HTTPS }}"
+          
+          # Validate that at least one URL is provided
+          if [ -z "${{ vars.PUBLIC_REPO_SSH }}" ] && [ -z "${{ vars.PUBLIC_REPO_HTTPS }}" ]; then
+            echo "ERROR: Both PUBLIC_REPO_SSH and PUBLIC_REPO_HTTPS are empty!"
+            echo "Please set at least one of these variables in repository settings."
+            exit 1
+          fi
+
+      - name: Test token permissions (HTTPS method)
+        env:
+          GITHUB_TOKEN: ${{ secrets.PUBLIC_REPO_TOKEN }}
+          REPO_URL: ${{ vars.PUBLIC_REPO_HTTPS }}
+        run: |
+          # Extract owner and repo from URL
+          REPO_PATH=$(echo "$REPO_URL" | sed 's|https://github.com/||' | sed 's|\.git$||')
+          OWNER=$(echo "$REPO_PATH" | cut -d'/' -f1)
+          REPO_NAME=$(echo "$REPO_PATH" | cut -d'/' -f2)
+          
+          echo "Testing token permissions for: $OWNER/$REPO_NAME"
+          
+          # Test API access
+          RESPONSE=$(curl -s -H "Authorization: token $GITHUB_TOKEN" \
+            "https://api.github.com/repos/$OWNER/$REPO_NAME")
+          
+          echo "Repository info response:"
+          echo "$RESPONSE" | jq -r '.full_name // "ERROR: " + .message // "Unknown error"'
+          
+          # Check if we have push access
+          CAN_PUSH=$(echo "$RESPONSE" | jq -r '.permissions.push // false')
+          echo "Can push to repository: $CAN_PUSH"
+          
+          if [ "$CAN_PUSH" != "true" ]; then
+            echo "Token does not have push permissions!"
+            echo "Please check:"
+            echo "1. Token has 'repo' scope"
+            echo "2. Token owner has push access to $OWNER/$REPO_NAME"
+            echo "3. Repository exists and is accessible"
+            exit 1
+          fi
 
       - name: Push to public repository (SSH)
-        if: steps.ssh_setup.outcome == 'success'
+        if: steps.ssh_setup.outcome == 'success' && vars.PUBLIC_REPO_SSH != ''
         env:
           PUBLIC_REPO_SSH: ${{ vars.PUBLIC_REPO_SSH }}
         run: |
           set -euxo pipefail
-          echo "Adding public remote: $PUBLIC_REPO_SSH"
+          echo "Using SSH method with URL: $PUBLIC_REPO_SSH"
           git remote add public "$PUBLIC_REPO_SSH"
           
           echo "Pushing to public repository via SSH..."
@@ -79,17 +123,67 @@ jobs:
           git push --force public --tags || echo "No tags to push"
 
       - name: Push to public repository (HTTPS with token)
-        if: steps.ssh_setup.outcome == 'failure'
+        if: (steps.ssh_setup.outcome == 'failure' || vars.PUBLIC_REPO_SSH == '') && vars.PUBLIC_REPO_HTTPS != ''
         env:
           PUBLIC_REPO_HTTPS: ${{ vars.PUBLIC_REPO_HTTPS }}
           GITHUB_TOKEN: ${{ secrets.PUBLIC_REPO_TOKEN }}
         run: |
           set -euxo pipefail
-          echo "Adding public remote: $PUBLIC_REPO_HTTPS"
-          git remote add public "https://x-access-token:${GITHUB_TOKEN}@${PUBLIC_REPO_HTTPS#https://}"
           
-          echo "Pushing to public repository via HTTPS..."
-          git push --force public HEAD:main
+          # Validate HTTPS URL format
+          if [[ ! "$PUBLIC_REPO_HTTPS" =~ ^https://github\.com/.+/.+\.git$ ]]; then
+            echo "ERROR: Invalid HTTPS URL format: $PUBLIC_REPO_HTTPS"
+            echo "Expected format: https://github.com/username/repository.git"
+            exit 1
+          fi
           
-          echo "Pushing tags..."
-          git push --force public --tags || echo "No tags to push"
+          # Validate token is provided
+          if [ -z "$GITHUB_TOKEN" ]; then
+            echo "ERROR: PUBLIC_REPO_TOKEN secret is not set!"
+            echo "Please add your Personal Access Token to repository secrets."
+            exit 1
+          fi
+          
+          echo "Using HTTPS method with URL: $PUBLIC_REPO_HTTPS"
+          
+          # Try different authentication methods
+          echo "Attempting push with x-access-token method..."
+          REPO_PATH=$(echo "$PUBLIC_REPO_HTTPS" | sed 's|https://github.com/||')
+          AUTH_URL_1="https://x-access-token:${GITHUB_TOKEN}@github.com/${REPO_PATH}"
+          
+          if ! git remote add public1 "$AUTH_URL_1" 2>/dev/null; then
+            echo "Failed to add remote with x-access-token method"
+          else
+            if git push --force public1 HEAD:main 2>/dev/null; then
+              echo "Successfully pushed with x-access-token method"
+              git push --force public1 --tags || echo "No tags to push"
+              exit 0
+            else
+              echo "Push failed with x-access-token method"
+              git remote remove public1 2>/dev/null || true
+            fi
+          fi
+          
+          echo "Attempting push with token in URL method..."
+          AUTH_URL_2="https://${GITHUB_TOKEN}@github.com/${REPO_PATH}"
+          
+          if ! git remote add public2 "$AUTH_URL_2" 2>/dev/null; then
+            echo "Failed to add remote with token in URL method"
+          else
+            if git push --force public2 HEAD:main 2>/dev/null; then
+              echo "Successfully pushed with token in URL method"
+              git push --force public2 --tags || echo "No tags to push"
+              exit 0
+            else
+              echo "Push failed with token in URL method"
+              git remote remove public2 2>/dev/null || true
+            fi
+          fi
+          
+          echo "All authentication methods failed"
+          exit 1
+
+      - name: Push failed - provide guidance
+        if: failure()
+        run: |
+          echo "Push to public repository failed!"
