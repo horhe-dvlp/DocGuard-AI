@@ -1,0 +1,79 @@
+name: Publish to public repo
+
+on:
+  push:
+    branches: [ main ]
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout full history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install git-filter-repo
+        run: |
+          python -m pip install --upgrade pip
+          pip install git-filter-repo
+
+      - name: Filter out private directories and sensitive files
+        run: |
+          set -euxo pipefail
+          # Filter private directories
+          git filter-repo --path-glob '*/private/*' --invert-paths --force
+          git filter-repo --path private/ --invert-paths --force
+          # Filter sensitive files
+          git filter-repo --path-glob '*.key' --invert-paths --force
+          git filter-repo --path-glob '*.pem' --invert-paths --force
+          git filter-repo --path-glob '*secret*' --invert-paths --force
+          git filter-repo --path-glob '*.private' --invert-paths --force
+          git filter-repo --path-glob 'config/local.*' --invert-paths --force
+          git filter-repo --path-glob 'config/production.*' --invert-paths --force
+          git filter-repo --path-glob 'credentials/' --invert-paths --force
+
+      - name: Setup SSH Deploy Key
+        env:
+          SSH_KEY: ${{ secrets.PUBLIC_DEPLOY_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          
+          # Save the key and fix line breaks if needed
+          echo "$SSH_KEY" > /tmp/deploy_key_raw
+          
+          LINES_COUNT=$(wc -l < /tmp/deploy_key_raw)
+          if [ "$LINES_COUNT" -eq 1 ]; then
+            # Fix single-line OpenSSH key format
+            KEY_CONTENT=$(cat /tmp/deploy_key_raw | tr -d '\n' | tr -d '\r')
+            KEY_BODY=$(echo "$KEY_CONTENT" | sed 's/.*-----BEGIN OPENSSH PRIVATE KEY-----//' | sed 's/-----END OPENSSH PRIVATE KEY-----.*//')
+            echo "-----BEGIN OPENSSH PRIVATE KEY-----" > ~/.ssh/deploy_key
+            echo "$KEY_BODY" | fold -w 70 >> ~/.ssh/deploy_key
+            echo "-----END OPENSSH PRIVATE KEY-----" >> ~/.ssh/deploy_key
+          else
+            echo "$SSH_KEY" > ~/.ssh/deploy_key
+          fi
+          
+          chmod 600 ~/.ssh/deploy_key
+          rm -f /tmp/deploy_key_raw
+          
+          # Setup SSH config
+          ssh-keyscan -H github.com >> ~/.ssh/known_hosts
+          echo "Host github.com" > ~/.ssh/config
+          echo "  IdentityFile /home/runner/.ssh/deploy_key" >> ~/.ssh/config
+          echo "  IdentitiesOnly yes" >> ~/.ssh/config
+          chmod 600 ~/.ssh/config
+          
+          # Configure git
+          git config --global user.name "GitHub Actions"
+          git config --global user.email "actions@github.com"
+
+      - name: Push to public repository
+        run: |
+          set -euxo pipefail
+          
+          git remote add public git@github.com:horhe-dvlp/DocGuard-AI.git
+          git push --force public HEAD:main
+          git push --force public --tags || echo "No tags to push"
+
