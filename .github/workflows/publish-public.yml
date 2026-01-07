@@ -7,6 +7,7 @@ on:
 jobs:
   publish:
     runs-on: ubuntu-latest
+    if: github.repository != 'horhe-dvlp/DocGuard-AI'
     steps:
       - name: Checkout full history
         uses: actions/checkout@v4
@@ -20,7 +21,6 @@ jobs:
 
       - name: Filter out private directories and sensitive files
         run: |
-          set -euxo pipefail
           # Filter private directories
           git filter-repo --path-glob '*/private/*' --invert-paths --force
           git filter-repo --path private/ --invert-paths --force
@@ -71,9 +71,6 @@ jobs:
 
       - name: Push to public repository
         run: |
-          set -euxo pipefail
-          
           git remote add public git@github.com:horhe-dvlp/DocGuard-AI.git
           git push --force public HEAD:main
           git push --force public --tags || echo "No tags to push"
-
