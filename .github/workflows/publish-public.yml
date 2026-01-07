@@ -33,21 +33,63 @@ jobs:
           git filter-repo --path-glob 'config/production.*' --invert-paths --force
           git filter-repo --path-glob 'credentials/' --invert-paths --force
 
-      - name: Start ssh-agent
+      - name: Setup SSH key (primary method)
         uses: webfactory/ssh-agent@v0.9.0
         with:
-            ssh-private-key: ${{ secrets.PUBLIC_DEPLOY_KEY }}
-        
-      - name: Add github.com to known_hosts
-        run: |
-            mkdir -p ~/.ssh
-            ssh-keyscan github.com >> ~/.ssh/known_hosts
+          ssh-private-key: ${{ secrets.PUBLIC_DEPLOY_KEY }}
+        continue-on-error: true
+        id: ssh_setup
 
-      - name: Push to public repository
+      - name: Configure Git and SSH
+        if: steps.ssh_setup.outcome == 'success'
+        run: |
+          # Configure git
+          git config --global user.name "GitHub Actions"
+          git config --global user.email "actions@github.com"
+          
+          # Add GitHub to known hosts
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          ssh-keyscan -H github.com >> ~/.ssh/known_hosts
+          chmod 644 ~/.ssh/known_hosts
+          
+          # Test SSH connection
+          ssh -T git@github.com || echo "SSH connection test completed"
+
+      - name: Configure Git with token (fallback method)
+        if: steps.ssh_setup.outcome == 'failure'
+        run: |
+          git config --global user.name "GitHub Actions"
+          git config --global user.email "actions@github.com"
+          git config --global url."https://x-access-token:${{ secrets.PUBLIC_REPO_TOKEN }}@github.com/".insteadOf "git@github.com:"
+
+      - name: Push to public repository (SSH)
+        if: steps.ssh_setup.outcome == 'success'
         env:
-          PUBLIC_REPO_SSH: ${{vars.PUBLIC_REPO_SSH}}
+          PUBLIC_REPO_SSH: ${{ vars.PUBLIC_REPO_SSH }}
         run: |
           set -euxo pipefail
+          echo "Adding public remote: $PUBLIC_REPO_SSH"
           git remote add public "$PUBLIC_REPO_SSH"
+          
+          echo "Pushing to public repository via SSH..."
           git push --force public HEAD:main
-          git push --force public --tags
+          
+          echo "Pushing tags..."
+          git push --force public --tags || echo "No tags to push"
+
+      - name: Push to public repository (HTTPS with token)
+        if: steps.ssh_setup.outcome == 'failure'
+        env:
+          PUBLIC_REPO_HTTPS: ${{ vars.PUBLIC_REPO_HTTPS }}
+          GITHUB_TOKEN: ${{ secrets.PUBLIC_REPO_TOKEN }}
+        run: |
+          set -euxo pipefail
+          echo "Adding public remote: $PUBLIC_REPO_HTTPS"
+          git remote add public "https://x-access-token:${GITHUB_TOKEN}@${PUBLIC_REPO_HTTPS#https://}"
+          
+          echo "Pushing to public repository via HTTPS..."
+          git push --force public HEAD:main
+          
+          echo "Pushing tags..."
+          git push --force public --tags || echo "No tags to push"
