@@ -146,41 +146,86 @@ jobs:
           
           echo "Using HTTPS method with URL: $PUBLIC_REPO_HTTPS"
           
-          # Try different authentication methods
-          echo "Attempting push with x-access-token method..."
-          REPO_PATH=$(echo "$PUBLIC_REPO_HTTPS" | sed 's|https://github.com/||')
-          AUTH_URL_1="https://x-access-token:${GITHUB_TOKEN}@github.com/${REPO_PATH}"
+          # Extract repo path correctly (remove .git extension)
+          REPO_PATH=$(echo "$PUBLIC_REPO_HTTPS" | sed 's|https://github.com/||' | sed 's|\.git$||')
+          echo "Repository path: $REPO_PATH"
           
-          if ! git remote add public1 "$AUTH_URL_1" 2>/dev/null; then
-            echo "Failed to add remote with x-access-token method"
-          else
-            if git push --force public1 HEAD:main 2>/dev/null; then
-              echo "Successfully pushed with x-access-token method"
-              git push --force public1 --tags || echo "No tags to push"
+          # Method 1: x-access-token
+          echo "=== Attempting Method 1: x-access-token ==="
+          AUTH_URL_1="https://x-access-token:${GITHUB_TOKEN}@github.com/${REPO_PATH}.git"
+          
+          echo "Adding remote public1..."
+          if git remote add public1 "$AUTH_URL_1"; then
+            echo "Remote added successfully"
+            echo "Attempting push..."
+            if git push --force public1 HEAD:main 2>&1; then
+              echo "Successfully pushed with x-access-token method!"
+              echo "Pushing tags..."
+              git push --force public1 --tags 2>&1 || echo "No tags to push or tags push failed"
               exit 0
             else
               echo "Push failed with x-access-token method"
+              echo "Removing failed remote..."
               git remote remove public1 2>/dev/null || true
             fi
+          else
+            echo "Failed to add remote with x-access-token method"
           fi
           
-          echo "Attempting push with token in URL method..."
-          AUTH_URL_2="https://${GITHUB_TOKEN}@github.com/${REPO_PATH}"
+          # Method 2: token directly in URL
+          echo "=== Attempting Method 2: token in URL ==="
+          AUTH_URL_2="https://${GITHUB_TOKEN}@github.com/${REPO_PATH}.git"
           
-          if ! git remote add public2 "$AUTH_URL_2" 2>/dev/null; then
-            echo "Failed to add remote with token in URL method"
-          else
-            if git push --force public2 HEAD:main 2>/dev/null; then
-              echo "Successfully pushed with token in URL method"
-              git push --force public2 --tags || echo "No tags to push"
+          echo "Adding remote public2..."
+          if git remote add public2 "$AUTH_URL_2"; then
+            echo "Remote added successfully"
+            echo "Attempting push..."
+            if git push --force public2 HEAD:main 2>&1; then
+              echo "Successfully pushed with token in URL method!"
+              echo "Pushing tags..."
+              git push --force public2 --tags 2>&1 || echo "No tags to push or tags push failed"
               exit 0
             else
               echo "Push failed with token in URL method"
+              echo "Removing failed remote..."
               git remote remove public2 2>/dev/null || true
             fi
+          else
+            echo "Failed to add remote with token in URL method"
           fi
           
-          echo "All authentication methods failed"
+          # Method 3: Using git credential helper
+          echo "=== Attempting Method 3: credential helper ==="
+          git config --global credential.helper store
+          echo "https://x-access-token:${GITHUB_TOKEN}@github.com" > ~/.git-credentials
+          
+          echo "Adding remote public3..."
+          if git remote add public3 "$PUBLIC_REPO_HTTPS"; then
+            echo "Remote added successfully"
+            echo "Attempting push..."
+            if git push --force public3 HEAD:main 2>&1; then
+              echo "Successfully pushed with credential helper method!"
+              echo "Pushing tags..."
+              git push --force public3 --tags 2>&1 || echo "No tags to push or tags push failed"
+              rm -f ~/.git-credentials  # Clean up
+              exit 0
+            else
+              echo "Push failed with credential helper method"
+              echo "Removing failed remote..."
+              git remote remove public3 2>/dev/null || true
+            fi
+          else
+            echo "Failed to add remote with credential helper method"
+          fi
+          
+          # Clean up credentials file
+          rm -f ~/.git-credentials
+          
+          echo "All authentication methods failed!"
+          echo "Debug info:"
+          echo "- Repository path: $REPO_PATH"
+          echo "- Target URL: $PUBLIC_REPO_HTTPS"
+          echo "- Token length: ${#GITHUB_TOKEN} characters"
           exit 1
 
       - name: Push failed - provide guidance
