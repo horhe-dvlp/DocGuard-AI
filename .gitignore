@@ -215,5 +215,28 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 
-private
-.*
+# Custom private directories and files
+config/local.*
+config/production.*
+*.key
+*.pem
+*.p12
+*.pfx
+
+# API keys and secrets
+*secret*
+*config*local*
+docker-compose.override.yml
+.docker/
+credentials/
+
+# Model files and data
+*.model
+*.pkl
+*.h5
+*.bin
+
+# Logs that might contain sensitive data
+*.log
+logs/
+
