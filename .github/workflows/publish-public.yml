@@ -33,202 +33,112 @@ jobs:
           git filter-repo --path-glob 'config/production.*' --invert-paths --force
           git filter-repo --path-glob 'credentials/' --invert-paths --force
 
-      - name: Setup SSH key (primary method)
-        uses: webfactory/ssh-agent@v0.9.0
-        with:
-          ssh-private-key: ${{ secrets.PUBLIC_DEPLOY_KEY }}
-        continue-on-error: true
-        id: ssh_setup
-
-      - name: Configure Git and SSH
-        if: steps.ssh_setup.outcome == 'success'
+      - name: Check Deploy Key availability
+        id: check_deploy_key
         run: |
-          # Configure git
-          git config --global user.name "GitHub Actions"
-          git config --global user.email "actions@github.com"
-          
-          # Add GitHub to known hosts
+          if [ -n "${{ secrets.PUBLIC_DEPLOY_KEY }}" ]; then
+            echo "deploy_key_available=true" >> $GITHUB_OUTPUT
+            echo "Deploy key is available"
+          else
+            echo "deploy_key_available=false" >> $GITHUB_OUTPUT
+            echo "Deploy key is not set"
+          fi
+
+      - name: Setup SSH Deploy Key
+        if: steps.check_deploy_key.outputs.deploy_key_available == 'true'
+        run: |
+          # Create SSH directory
           mkdir -p ~/.ssh
           chmod 700 ~/.ssh
+          
+          # Handle deploy key with proper line breaks
+          echo "Setting up deploy key..."
+          
+          # Save the key to a temporary file and fix line breaks
+          echo "${{ secrets.PUBLIC_DEPLOY_KEY }}" > /tmp/deploy_key_raw
+          
+          # Check if key already has proper format
+          if grep -q "BEGIN.*PRIVATE KEY" /tmp/deploy_key_raw && grep -q "END.*PRIVATE KEY" /tmp/deploy_key_raw; then
+            echo "Key appears to have proper format"
+            cp /tmp/deploy_key_raw ~/.ssh/id_ed25519
+          else
+            echo "Key might be missing line breaks, attempting to fix..."
+            # Try to reconstruct proper SSH key format
+            KEY_CONTENT=$(cat /tmp/deploy_key_raw | tr -d '\n' | tr -d '\r')
+            
+            # Check for ed25519 key format
+            if echo "$KEY_CONTENT" | grep -q "BEGIN OPENSSH PRIVATE KEY"; then
+              echo "Detected OpenSSH format key"
+              echo "-----BEGIN OPENSSH PRIVATE KEY-----" > ~/.ssh/id_ed25519
+              echo "$KEY_CONTENT" | sed 's/-----BEGIN OPENSSH PRIVATE KEY-----//' | sed 's/-----END OPENSSH PRIVATE KEY-----//' | fold -w 64 >> ~/.ssh/id_ed25519
+              echo "-----END OPENSSH PRIVATE KEY-----" >> ~/.ssh/id_ed25519
+            elif echo "$KEY_CONTENT" | grep -q "BEGIN RSA PRIVATE KEY"; then
+              echo "Detected RSA format key"
+              echo "-----BEGIN RSA PRIVATE KEY-----" > ~/.ssh/id_ed25519
+              echo "$KEY_CONTENT" | sed 's/-----BEGIN RSA PRIVATE KEY-----//' | sed 's/-----END RSA PRIVATE KEY-----//' | fold -w 64 >> ~/.ssh/id_ed25519
+              echo "-----END RSA PRIVATE KEY-----" >> ~/.ssh/id_ed25519
+            elif echo "$KEY_CONTENT" | grep -q "BEGIN EC PRIVATE KEY"; then
+              echo "Detected EC format key"
+              echo "-----BEGIN EC PRIVATE KEY-----" > ~/.ssh/id_ed25519
+              echo "$KEY_CONTENT" | sed 's/-----BEGIN EC PRIVATE KEY-----//' | sed 's/-----END EC PRIVATE KEY-----//' | fold -w 64 >> ~/.ssh/id_ed25519
+              echo "-----END EC PRIVATE KEY-----" >> ~/.ssh/id_ed25519
+            else
+              echo "Error: Could not detect SSH key format"
+              echo "Raw key preview (first 100 chars): $(echo "$KEY_CONTENT" | head -c 100)..."
+              exit 1
+            fi
+          fi
+          
+          # Set proper permissions
+          chmod 600 ~/.ssh/id_ed25519
+          
+          # Verify key format
+          echo "Verifying key format..."
+          if ssh-keygen -l -f ~/.ssh/id_ed25519 2>/dev/null; then
+            echo "Key format verification successful"
+          else
+            echo "Key format verification failed"
+            echo "Key file contents preview:"
+            head -3 ~/.ssh/id_ed25519
+            echo "..."
+            tail -3 ~/.ssh/id_ed25519
+            exit 1
+          fi
+          
+          # Clean up temporary file
+          rm -f /tmp/deploy_key_raw
+          
+          # Add GitHub to known hosts
           ssh-keyscan -H github.com >> ~/.ssh/known_hosts
           chmod 644 ~/.ssh/known_hosts
           
           # Test SSH connection
-          ssh -T git@github.com || echo "SSH connection test completed"
-
-      - name: Configure Git with token (fallback method)
-        if: steps.ssh_setup.outcome == 'failure'
-        run: |
+          echo "Testing SSH connection..."
+          ssh -T git@github.com || echo "SSH test completed (exit code $?)"
+          
+          # Configure git
           git config --global user.name "GitHub Actions"
           git config --global user.email "actions@github.com"
 
-      - name: Validate repository URLs
-        run: |
-          echo "Checking repository URLs..."
-          echo "SSH URL: ${{ vars.PUBLIC_REPO_SSH }}"
-          echo "HTTPS URL: ${{ vars.PUBLIC_REPO_HTTPS }}"
-          
-          # Validate that at least one URL is provided
-          if [ -z "${{ vars.PUBLIC_REPO_SSH }}" ] && [ -z "${{ vars.PUBLIC_REPO_HTTPS }}" ]; then
-            echo "ERROR: Both PUBLIC_REPO_SSH and PUBLIC_REPO_HTTPS are empty!"
-            echo "Please set at least one of these variables in repository settings."
-            exit 1
-          fi
-
-      - name: Test token permissions (HTTPS method)
+      - name: Push via SSH Deploy Key
+        if: steps.check_deploy_key.outputs.deploy_key_available == 'true'
         env:
-          GITHUB_TOKEN: ${{ secrets.PUBLIC_REPO_TOKEN }}
-          REPO_URL: ${{ vars.PUBLIC_REPO_HTTPS }}
-        run: |
-          # Extract owner and repo from URL
-          REPO_PATH=$(echo "$REPO_URL" | sed 's|https://github.com/||' | sed 's|\.git$||')
-          OWNER=$(echo "$REPO_PATH" | cut -d'/' -f1)
-          REPO_NAME=$(echo "$REPO_PATH" | cut -d'/' -f2)
-          
-          echo "Testing token permissions for: $OWNER/$REPO_NAME"
-          
-          # Test API access
-          RESPONSE=$(curl -s -H "Authorization: token $GITHUB_TOKEN" \
-            "https://api.github.com/repos/$OWNER/$REPO_NAME")
-          
-          echo "Repository info response:"
-          echo "$RESPONSE" | jq -r '.full_name // "ERROR: " + .message // "Unknown error"'
-          
-          # Check if we have push access
-          CAN_PUSH=$(echo "$RESPONSE" | jq -r '.permissions.push // false')
-          echo "Can push to repository: $CAN_PUSH"
-          
-          if [ "$CAN_PUSH" != "true" ]; then
-            echo "Token does not have push permissions!"
-            echo "Please check:"
-            echo "1. Token has 'repo' scope"
-            echo "2. Token owner has push access to $OWNER/$REPO_NAME"
-            echo "3. Repository exists and is accessible"
-            exit 1
-          fi
-
-      - name: Push to public repository (SSH)
-        if: steps.ssh_setup.outcome == 'success' && vars.PUBLIC_REPO_SSH != ''
-        env:
-          PUBLIC_REPO_SSH: ${{ vars.PUBLIC_REPO_SSH }}
+          SSH_REPO_URL: "git@github.com:horhe-dvlp/DocGuard-AI.git"
         run: |
           set -euxo pipefail
-          echo "Using SSH method with URL: $PUBLIC_REPO_SSH"
-          git remote add public "$PUBLIC_REPO_SSH"
           
+          echo "Using SSH Deploy Key method"
+          echo "Target repository: $SSH_REPO_URL"
+          
+          # Add remote
+          git remote add public-ssh "$SSH_REPO_URL"
+          
+          # Push to repository
           echo "Pushing to public repository via SSH..."
-          git push --force public HEAD:main
+          git push --force public-ssh HEAD:main
           
           echo "Pushing tags..."
-          git push --force public --tags || echo "No tags to push"
+          git push --force public-ssh --tags || echo "No tags to push"
+          
+          echo "Successfully published to public repository!"
 
-      - name: Push to public repository (HTTPS with token)
-        if: (steps.ssh_setup.outcome == 'failure' || vars.PUBLIC_REPO_SSH == '') && vars.PUBLIC_REPO_HTTPS != ''
-        env:
-          PUBLIC_REPO_HTTPS: ${{ vars.PUBLIC_REPO_HTTPS }}
-          GITHUB_TOKEN: ${{ secrets.PUBLIC_REPO_TOKEN }}
-        run: |
-          set -euxo pipefail
-          
-          # Validate HTTPS URL format
-          if [[ ! "$PUBLIC_REPO_HTTPS" =~ ^https://github\.com/.+/.+\.git$ ]]; then
-            echo "ERROR: Invalid HTTPS URL format: $PUBLIC_REPO_HTTPS"
-            echo "Expected format: https://github.com/username/repository.git"
-            exit 1
-          fi
-          
-          # Validate token is provided
-          if [ -z "$GITHUB_TOKEN" ]; then
-            echo "ERROR: PUBLIC_REPO_TOKEN secret is not set!"
-            echo "Please add your Personal Access Token to repository secrets."
-            exit 1
-          fi
-          
-          echo "Using HTTPS method with URL: $PUBLIC_REPO_HTTPS"
-          
-          # Extract repo path correctly (remove .git extension)
-          REPO_PATH=$(echo "$PUBLIC_REPO_HTTPS" | sed 's|https://github.com/||' | sed 's|\.git$||')
-          echo "Repository path: $REPO_PATH"
-          
-          # Method 1: x-access-token
-          echo "=== Attempting Method 1: x-access-token ==="
-          AUTH_URL_1="https://x-access-token:${GITHUB_TOKEN}@github.com/${REPO_PATH}.git"
-          
-          echo "Adding remote public1..."
-          if git remote add public1 "$AUTH_URL_1"; then
-            echo "Remote added successfully"
-            echo "Attempting push..."
-            if git push --force public1 HEAD:main 2>&1; then
-              echo "Successfully pushed with x-access-token method!"
-              echo "Pushing tags..."
-              git push --force public1 --tags 2>&1 || echo "No tags to push or tags push failed"
-              exit 0
-            else
-              echo "Push failed with x-access-token method"
-              echo "Removing failed remote..."
-              git remote remove public1 2>/dev/null || true
-            fi
-          else
-            echo "Failed to add remote with x-access-token method"
-          fi
-          
-          # Method 2: token directly in URL
-          echo "=== Attempting Method 2: token in URL ==="
-          AUTH_URL_2="https://${GITHUB_TOKEN}@github.com/${REPO_PATH}.git"
-          
-          echo "Adding remote public2..."
-          if git remote add public2 "$AUTH_URL_2"; then
-            echo "Remote added successfully"
-            echo "Attempting push..."
-            if git push --force public2 HEAD:main 2>&1; then
-              echo "Successfully pushed with token in URL method!"
-              echo "Pushing tags..."
-              git push --force public2 --tags 2>&1 || echo "No tags to push or tags push failed"
-              exit 0
-            else
-              echo "Push failed with token in URL method"
-              echo "Removing failed remote..."
-              git remote remove public2 2>/dev/null || true
-            fi
-          else
-            echo "Failed to add remote with token in URL method"
-          fi
-          
-          # Method 3: Using git credential helper
-          echo "=== Attempting Method 3: credential helper ==="
-          git config --global credential.helper store
-          echo "https://x-access-token:${GITHUB_TOKEN}@github.com" > ~/.git-credentials
-          
-          echo "Adding remote public3..."
-          if git remote add public3 "$PUBLIC_REPO_HTTPS"; then
-            echo "Remote added successfully"
-            echo "Attempting push..."
-            if git push --force public3 HEAD:main 2>&1; then
-              echo "Successfully pushed with credential helper method!"
-              echo "Pushing tags..."
-              git push --force public3 --tags 2>&1 || echo "No tags to push or tags push failed"
-              rm -f ~/.git-credentials  # Clean up
-              exit 0
-            else
-              echo "Push failed with credential helper method"
-              echo "Removing failed remote..."
-              git remote remove public3 2>/dev/null || true
-            fi
-          else
-            echo "Failed to add remote with credential helper method"
-          fi
-          
-          # Clean up credentials file
-          rm -f ~/.git-credentials
-          
-          echo "All authentication methods failed!"
-          echo "Debug info:"
-          echo "- Repository path: $REPO_PATH"
-          echo "- Target URL: $PUBLIC_REPO_HTTPS"
-          echo "- Token length: ${#GITHUB_TOKEN} characters"
-          exit 1
-
-      - name: Push failed - provide guidance
-        if: failure()
-        run: |
-          echo "Push to public repository failed!"
