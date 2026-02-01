@@ -214,6 +214,12 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+<<<<<<< HEAD
+.paddlex
+
+/data
+lcl_*
+=======
 
 # Custom private directories and files
 config/local.*
@@ -240,3 +246,4 @@ credentials/
 *.log
 logs/
 
+>>>>>>> main

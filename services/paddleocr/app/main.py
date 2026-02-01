@@ -161,6 +161,7 @@ async def analyze_document(image: UploadFile = File(...)):
                     Detection(
                         bbox=BBox(x1=x1, y1=y1, x2=x2, y2=y2),
                         cls=obj.get("block_label", "unknown"),
+                        confidence=obj.get("score"),
                     )
                 )
             except (KeyError, ValueError, TypeError) as e:

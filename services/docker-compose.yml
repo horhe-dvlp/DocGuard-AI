@@ -36,7 +36,7 @@ services:
         GPU_ARCH: ${GPU_ARCH:-120}
     container_name: paddleocr-ppstructure-service
     ports:
-      - "8072:8072"
+      - "${PPSTRUCTURE_PORT}:8080"
     volumes:
       - ./.paddlex:/root/.paddlex
     deploy:
@@ -53,6 +53,23 @@ services:
       timeout: 10s
       retries: 3
       start_period: 120s
+
+  preprocessing:
+    build:
+      context: ./preprocessing
+    container_name: preprocessing-service
+    ports:
+      - "${PREPROCESSING_PORT}:8080"
+    depends_on:
+      - paddleocr
+      - paddleocr-vl
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8073/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
 
 networks:
   default:

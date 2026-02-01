@@ -55,6 +55,6 @@ RUN pip install --no-cache-dir paddleocr[doc-parser]
 
 COPY app/ ./app/
 
-EXPOSE 8072
+EXPOSE 8080
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8072"]
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8080"]
